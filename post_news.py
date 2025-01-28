@@ -12,10 +12,10 @@ import subprocess
 import requests
 from collections import defaultdict
 import concurrent.futures
-from firecrawl import FirecrawlApp
 import time
 import random
 import hashlib
+from post_news_linkedin import LinkedInScraper
 
 
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "...")
@@ -39,9 +39,6 @@ CACHE_DIR = 'post_news_cache'
 def call_firecrawl_scrape(retrieve_url: str) -> str:
     retval = ""
     try:
-        #app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
-        #retval = app.scrape_url(url, params={'formats': ['markdown']})
-
         url = "https://api.firecrawl.dev/v1/scrape"
 
         payload = {
@@ -74,6 +71,13 @@ def get_post(query: str) -> str:
         report += f"\n```Article\n{perplexity_response}\n```\n"
     initial_answers = generate_initial_answers(report, 8)
     return rank_answers(initial_answers)
+
+def get_linkedin_posts() -> str:
+    ls = LinkedInScraper()
+    posts = ls.run()
+    response = "\n".join(posts)
+    response = call_openai(f"Remove posts not related to Artificial Intelligence, Machine Learning, or Large Language Models.\n\n{response}")
+    return response
 
 def get_huggingface_papers(days_in_past: int) -> List[str]:
     results = []
@@ -125,6 +129,8 @@ def generate_perplexity_responses(query: str, n: int) -> List[str]:
     perplexity_responses = []
     hf_papers = get_huggingface_papers(days_in_past=1)
     perplexity_responses.append(hf_papers)
+    linkedin_content = get_linkedin_posts()
+    perplexity_responses.append(linkedin_content)
     print("Generating perplexity responses in parallel...")
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(call_perplexity, query, "day") for _ in range(n)]
@@ -140,11 +146,10 @@ def generate_perplexity_responses(query: str, n: int) -> List[str]:
 def generate_initial_answers(report: str, n: int) -> List[str]:
     initial_answers = []
     prompt = f"""
-    Today is {get_current_datetime()}
-    Write today's AI news by consolidating new arxiv papers and news story without missing any detail, cite all sources as links [Read more](<citation source>). 
-    Important: Don't miss any arxiv paper or news story.
-    Response document # title must be 'AI News for <date>', where <date> is today's date in the format, MM-DD-YYYY.
-    Response each arxiv paper or news story identified as such with it's own ## tag with accompanying details.
+    Today is {get_current_datetime()}.
+
+    Given the Context below, Response document will have a single # title whcih must be 'AI News for <date>', where <date> is today's date in the format, MM-DD-YYYY. Furthermore, response will have only 3 sections named Arxiv Papers, News Stories, and LinkedIn Buzz, each with it's own ## tag and associated content. Make sure each Arxiv Paper, News Story, and LinkedIn Buzz Post with it's own ### tag are placed into the most appropriate one of three available sections,  without missing any detail, cite all sources as links [Read more](<citation source>). Response should not use numbering.
+    
     ```Context
     {report}
     ```
